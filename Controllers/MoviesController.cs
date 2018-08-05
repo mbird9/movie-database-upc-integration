@@ -2,10 +2,12 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Entity;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Text.RegularExpressions;
 using System.Web;
 using System.Web.Mvc;
 using System.Web.Script.Serialization;
@@ -104,6 +106,7 @@ namespace MvcMovie.Controllers
 
             using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
             {
+                //Serialize the UPC 
                 string json = new JavaScriptSerializer().Serialize(new
                 {
                     upc = UPC,
@@ -120,31 +123,37 @@ namespace MvcMovie.Controllers
                     result = streamReader.ReadToEnd();
                 }
 
-                var returnedUPCData = ConvertJSONStringtoDataSet(result);
+                DataSet returnedUPCData = ConvertJSONStringtoDataSet(result);
 
-                //Retrieve the title from the DataSet
+                //Retrieve the title from the DataSet (only one record is ever returned in the table so there is currently no need to query)
                 string movieTitle = Convert.ToString(returnedUPCData.Tables[1].Rows[0]["title"]);
 
+                //Clean up returned title 
+                string updatedTitle = UpdateTitleFormatting(movieTitle);
+
                 //update the movie title to be URL-friendly
-                string movieTitleURL = movieTitle.Replace(" ", "+");
+                string movieTitleURL = updatedTitle.Replace(" ", "+");
 
-                var returnedDataSet = FindMatches(movieTitleURL);
-
+                DataSet returnedDataSet = FindMatches(movieTitleURL);
                 DataTable matches = returnedDataSet.Tables["Search"];
 
-                //query the matches dataset to only return movies and the exact movie title
+                //query the matches dataset to only return items of Type "movie" with the exact movie title
                 var query =
                     from match in matches.AsEnumerable()
                     where match.Field<string>("Type") == "movie"
-                        && match.Field<string>("Title") == movieTitle
-                    select match;
+                        && match.Field<string>("Title") == updatedTitle
+                    select new
+                    {
+                        Title = match.Field<string>("Title"),
+                        Year = match.Field<string>("Year"),
+                    };
 
                 foreach (var movieMatch in query)
                 {
                     if (query.Count() == 1)
                     {
                         //only one record exists, make a call back to the OMDb API to get the full movie information
-                        var movieDataSet = FindMatches(movieMatch.Field<string>("Title"), movieMatch.Field<string>("Year"));
+                        var movieDataSet = FindMatches(movieMatch.Title, movieMatch.Year);
 
                         DataTable movieInfo = movieDataSet.Tables["rootNode"];
 
@@ -167,7 +176,7 @@ namespace MvcMovie.Controllers
             }
             catch (WebException e)
             {
-                var abc = "";
+                //TODO: Add functionality to tell the user that they did not input a valid UPC
             }
 
             return View();
@@ -195,17 +204,39 @@ namespace MvcMovie.Controllers
         }
 
         /// <summary>
+        /// Cleans up returned title from UPCitemdb to be used in the request to OMDb 
+        /// </summary>
+        /// <param name="title">Title returned from UPCitemdb</param>
+        /// <returns></returns>
+        private static string UpdateTitleFormatting(string title)
+        {
+            TextInfo textInfo = new CultureInfo("en-US", false).TextInfo;
+
+            //Use a regular expression to remove unneccessary info from title
+            //NOTE: Currently strips only matches to "dvd", "blu-ray", and "disc" found within parentheses (and the parentheses themselves)
+            string regex = @"\(([^)]*[^a-zA-Z)])?(dvd|blu-ray|disc)([^a-zA-Z)][^)]*)?\)";
+            string newTitle = Regex.Replace(title.ToLower(), regex, "");
+
+            //Set the words back to title case, and remove any leading or ending spaces
+            newTitle = textInfo.ToTitleCase(newTitle);
+            newTitle = newTitle.Trim();
+
+            return newTitle;
+        }
+
+        /// <summary>
         /// Makes a request to the OMDb API and returns either a list of search results, or the full information of a movie (if year is supplied)
         /// </summary>
         /// <param name="title">Movie title </param>
         /// <param name="year">Movie year; Optional </param>
         /// <returns></returns>
-        public static DataSet FindMatches(string title, string year="")
+        private static DataSet FindMatches(string title, string year="")
         {
             string url;
 
             if (year == "")
             {
+                //year is not used during a general search
                 url = "http://www.omdbapi.com/?s=" + title + "&apikey=3c15edec";
             }
             else
