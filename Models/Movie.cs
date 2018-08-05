@@ -28,7 +28,7 @@ namespace MvcMovie.Models
         [StringLength(5)]
         public string Rating { get; set; }
 
-        [RegularExpression(@"^[1-9][0-9]*$")]
+        [RegularExpression(@"^[0-9][0-9]*$")]
         [StringLength(12)]
         public string UPC { get; set; }
 
