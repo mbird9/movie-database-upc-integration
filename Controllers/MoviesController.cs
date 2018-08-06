@@ -100,30 +100,7 @@ namespace MvcMovie.Controllers
         [ValidateAntiForgeryToken]
         public ActionResult FindByUPC(string UPC)
         {
-            var httpWebRequest = (HttpWebRequest)WebRequest.Create("https://api.upcitemdb.com/prod/trial/lookup");
-            httpWebRequest.ContentType = "application/json";
-            httpWebRequest.Method = "POST";
-
-            using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
-            {
-                //Serialize the UPC 
-                string json = new JavaScriptSerializer().Serialize(new
-                {
-                    upc = UPC,
-                });
-                streamWriter.Write(json);
-            }
-            try {
-                var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse();
-
-                string result;
-
-                using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
-                {
-                    result = streamReader.ReadToEnd();
-                }
-
-                DataSet returnedUPCData = ConvertJSONStringtoDataSet(result);
+                DataSet returnedUPCData = APIDataRequest("", "", UPC);
 
                 //Retrieve the title from the DataSet (only one record is ever returned in the table so there is currently no need to query)
                 string movieTitle = Convert.ToString(returnedUPCData.Tables[1].Rows[0]["title"]);
@@ -134,8 +111,8 @@ namespace MvcMovie.Controllers
                 //update the movie title to be URL-friendly
                 string movieTitleURL = updatedTitle.Replace(" ", "+");
 
-                DataSet returnedDataSet = FindMatches(movieTitleURL);
-                DataTable matches = returnedDataSet.Tables["Search"];
+                DataSet OMDbMatchesDataSet = APIDataRequest(movieTitleURL);
+                DataTable matches = OMDbMatchesDataSet.Tables["Search"];
 
                 //query the matches dataset to only return items of Type "movie" with the exact movie title
                 var query =
@@ -153,7 +130,7 @@ namespace MvcMovie.Controllers
                     if (query.Count() == 1)
                     {
                         //only one record exists, make a call back to the OMDb API to get the full movie information
-                        var movieDataSet = FindMatches(movieMatch.Title, movieMatch.Year);
+                        var movieDataSet = APIDataRequest(movieMatch.Title, movieMatch.Year);
 
                         DataTable movieInfo = movieDataSet.Tables["rootNode"];
 
@@ -163,7 +140,7 @@ namespace MvcMovie.Controllers
                             ReleaseDate = Convert.ToDateTime(movieInfo.Rows[0]["Released"]),
                             Genre = movieInfo.Rows[0]["Genre"].ToString(),
                             Rating = movieInfo.Rows[0]["Rated"].ToString(),
-                            Price = 9.99M, //TODO: Get price from api.upcitemdb.com or remove the field entirely
+                            Price = 9.99M, //TODO: Get price from UPCitemdb or remove the field entirely
                             UPC = UPC
                         };
                         return Create(movie);
@@ -173,15 +150,78 @@ namespace MvcMovie.Controllers
                         //TODO: Add ability for user to select from the list of returned movies the one that matches their scanned movie
                     }
                 }
+            return View();
+        }
+
+        /// <summary>
+        /// Makes a request to either the UPCitemdb or OMDb API and returns data from either site
+        /// </summary>
+        /// <param name="title">Movie title</param>
+        /// <param name="year">Movie year; Optional </param>
+        /// <param name="UPC">UPC entered in the Find By UPC field; Optional</param>
+        /// <returns></returns>
+        private static DataSet APIDataRequest(string title, string year = "", string UPC = "")
+        {
+            string url;
+
+            if (UPC != "")
+            {
+                //Initial request to UPCitemdb
+                url = "https://api.upcitemdb.com/prod/trial/lookup";
+            }
+            else if (year == "")
+            {
+                //Search request to OMDb
+                url = "http://www.omdbapi.com/?s=" + title + "&apikey=3c15edec";
+            }
+            else
+            {
+                //Movie lookup by title and year
+                url = "http://www.omdbapi.com/?t=" + title + "&y" + year + "&apikey=3c15edec";
+            }
+            var httpWebRequest = (HttpWebRequest)WebRequest.Create(url);
+            httpWebRequest.ContentType = "application/json";
+            if (UPC != "")
+            {
+                //UPCitemdb request uses HTTP POST and requires a JSON LookupRequest
+                httpWebRequest.Method = "POST";
+
+                using (var streamWriter = new StreamWriter(httpWebRequest.GetRequestStream()))
+                {
+                    //Serialize the UPC 
+                    string json = new JavaScriptSerializer().Serialize(new
+                    {
+                        upc = UPC,
+                    });
+                    streamWriter.Write(json);
+                }
+            }
+            else
+            {
+                //OMDb request uses HTTP GET
+                httpWebRequest.Method = "GET";
+            }
+
+            var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse();
+            string result;
+
+            try
+            {
+                using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
+                {
+                    result = streamReader.ReadToEnd();
+                }
+
+                DataSet resultDataSet = ConvertJSONStringtoDataSet(result);
+
+                return resultDataSet;
             }
             catch (WebException e)
             {
                 //TODO: Add functionality to tell the user that they did not input a valid UPC
+                return new DataSet();
             }
-
-            return View();
         }
-
         /// <summary>
         /// Deserializes JSON to XML, then converts it to a DataSet
         /// </summary>
@@ -222,41 +262,6 @@ namespace MvcMovie.Controllers
             newTitle = newTitle.Trim();
 
             return newTitle;
-        }
-
-        /// <summary>
-        /// Makes a request to the OMDb API and returns either a list of search results, or the full information of a movie (if year is supplied)
-        /// </summary>
-        /// <param name="title">Movie title </param>
-        /// <param name="year">Movie year; Optional </param>
-        /// <returns></returns>
-        private static DataSet FindMatches(string title, string year="")
-        {
-            string url;
-
-            if (year == "")
-            {
-                //year is not used during a general search
-                url = "http://www.omdbapi.com/?s=" + title + "&apikey=3c15edec";
-            }
-            else
-            {
-                url = "http://www.omdbapi.com/?t=" + title + "&y" + year + "&apikey=3c15edec";
-            }
-            var httpWebRequest = (HttpWebRequest)WebRequest.Create(url);
-            httpWebRequest.ContentType = "application/json";
-            httpWebRequest.Method = "GET";
-
-            var httpResponse = (HttpWebResponse)httpWebRequest.GetResponse();
-            string result;
-
-            using (var streamReader = new StreamReader(httpResponse.GetResponseStream()))
-            {
-                result = streamReader.ReadToEnd();
-            }
-
-            var resultDataSet = ConvertJSONStringtoDataSet(result);
-            return resultDataSet;
         }
 
         // GET: Movies/Edit/5
