@@ -252,10 +252,12 @@ namespace MvcMovie.Controllers
         {
             TextInfo textInfo = new CultureInfo("en-US", false).TextInfo;
 
-            //Use a regular expression to remove unneccessary info from title
-            //NOTE: Currently strips only matches to "dvd", "blu-ray", and "disc" found within parentheses (and the parentheses themselves)
-            string regex = @"\(([^)]*[^a-zA-Z)])?(dvd|blu-ray|disc)([^a-zA-Z)][^)]*)?\)";
-            string newTitle = Regex.Replace(title.ToLower(), regex, "");
+            //Strips the following matches from the title:
+            // Any match to text within parentheses (along with the parentheses themselves) with the words "dvd", "blu-ray", and "disc"
+            // Any instance of "bd-"
+            // Any instance of the word "steelbook"
+            string regEx = @"(\(([^)]*[^a-z)])?(dvd|blu-ray|disc)([^a-z)][^)]*)?\))|([a -z])?(bd)([a - z])?\-|([a-z])?(steelbook)([a-z])?";
+            string newTitle = Regex.Replace(title.ToLower(), regEx, "");
 
             //Set the words back to title case, and remove any leading or ending spaces
             newTitle = textInfo.ToTitleCase(newTitle);
